@@ -13,7 +13,7 @@ pandas
 pytesseract
 opencv-python
 sentence-transformers
-transformers==4.40.2
+ 
 torch
 accelerate
 python-docx
@@ -29,5 +29,8 @@ uvicorn
 langsmith
 
 protobuf==4.25.3
-tensorflow-intel==2.16.1
+ 
 opentelemetry-proto==1.18.0
+reportlab
+python-multipart
+boto3
