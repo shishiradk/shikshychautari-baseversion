@@ -247,7 +247,7 @@ Output the predicted exam paper only.
         input_variables=["past_questions", "syllabus", "additional_instructions"],
         template=template,
     )
-    llm = ChatOpenAI(model_name="GPT-4-mini", temperature=0.3, max_tokens=1400)
+    llm = ChatOpenAI(model_name="GPT-5", temperature=0.3, max_tokens=1400)
     output_parser = StrOutputParser()
     return prompt | llm | output_parser
 
