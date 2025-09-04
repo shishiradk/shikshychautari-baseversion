@@ -120,7 +120,7 @@ def paper_to_pdf_bytes(title: str, content: str) -> bytes:
                 continue
             code_text = part.strip()
             if code_text:
-                story.append(Paragraph("<b>Block:</b>", styles["BodyText"])))
+                story.append(Paragraph("<b>Block:</b>", styles["BodyText"]))
                 story.append(Paragraph(code_text.replace("\n", "<br/>"), styles["Code"]))
                 story.append(Spacer(1, 8))
     doc.build(story)
