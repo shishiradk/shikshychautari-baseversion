@@ -21,6 +21,7 @@ docx2txt
 pillow
 pdf2image
 fpdf
+pypdf
 PyPDF2
 tiktoken
 faiss-cpu
