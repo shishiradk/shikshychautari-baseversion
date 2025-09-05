@@ -5,33 +5,17 @@ from pydantic import BaseModel
 from typing import List, Optional
 import os
 import uuid
-from io import BytesIO
-from PyPDF2 import PdfReader
-from langchain.text_splitter import RecursiveCharacterTextSplitter
-from langchain_community.vectorstores import FAISS
-from langchain_openai import OpenAIEmbeddings, ChatOpenAI
-from langchain.prompts import PromptTemplate
-from langchain_core.output_parsers import StrOutputParser
-from dotenv import load_dotenv
-import boto3
 import tempfile
-
-# Optional PDF generation (reportlab)
-try:
-    from reportlab.lib.pagesizes import A4
-    from reportlab.lib.styles import getSampleStyleSheet
-    from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer
-    REPORTLAB_OK = True
-except Exception:
-    REPORTLAB_OK = False
-
-# Load environment variables
-load_dotenv()
-
-# LangSmith Tracking
-os.environ["LANGCHAIN_API_KEY"] = os.getenv("LANGCHAIN_API_KEY")
-os.environ["LANGCHAIN_TRACING_V2"] = "true"
-os.environ["LANGCHAIN_PROJECT"] = "Question Paper Generator API"
+import boto3
+from utils import (
+    extract_text_from_pdfs, 
+    chunk_text, 
+    create_vector_store, 
+    load_vector_store, 
+    generate_predicted_paper, 
+    paper_to_pdf_bytes, 
+    REPORTLAB_OK
+)
 
 # Pydantic Models
 class GeneratePaperRequest(BaseModel):
@@ -187,107 +171,6 @@ def upload_pdf_to_s3(pdf_bytes: bytes, bucket_name: str, output_prefix: str, fil
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Error uploading to S3: {str(e)}")
 
-# Utility functions
-def extract_text_from_pdfs(pdfs: List[bytes]) -> str:
-    """Extract text from multiple PDF files"""
-    full_text = ""
-    for pdf_bytes in pdfs:
-        reader = PdfReader(BytesIO(pdf_bytes))
-        for page in reader.pages:
-            text = page.extract_text()
-            if text:
-                full_text += text
-    return full_text
-
-def chunk_text(text: str) -> List[str]:
-    """Split text into chunks for vector storage"""
-    splitter = RecursiveCharacterTextSplitter(chunk_size=1000, chunk_overlap=150)
-    return splitter.split_text(text)
-
-def create_vector_store(chunks: List[str], session_id: str) -> str:
-    """Create and save vector store for a session"""
-    embeddings = OpenAIEmbeddings()
-    vectorstore = FAISS.from_texts(chunks, embedding=embeddings)
-    
-    # Create session-specific directory
-    db_path = f"faiss_index_{session_id}"
-    vectorstore.save_local(db_path)
-    return db_path
-
-def load_vector_store(session_id: str) -> FAISS:
-    """Load vector store for a session"""
-    embeddings = OpenAIEmbeddings()
-    db_path = f"faiss_index_{session_id}"
-    return FAISS.load_local(db_path, embeddings, allow_dangerous_deserialization=True)
-
-def get_question_generator_chain():
-    """Create the question generation chain"""
-    template = """
-You are an expert academic exam paper predictor.
-Generate exactly **one** complete future exam paper with the highest probability of appearing questions, using the inputs below.
-
-Requirements:
-1) Mirror the sections, numbering, and marks distribution seen in past papers.
-2) Maximize recurrence likelihood: pick topics and phrasings consistent with past patterns without copying verbatim.
-3) Fill all sections fully. Produce one paper only.
-4) Include high-importance syllabus areas that were underrepresented historically to keep the paper realistic.
-5) Maintain academic tone, clarity, and logical flow.
-
---- PAST QUESTION CONTEXT ---
-{past_questions}
-
---- SYLLABUS CONTENT ---
-{syllabus}
-
-{additional_instructions}
-
-Output the predicted exam paper only.
-"""
-    prompt = PromptTemplate(
-        input_variables=["past_questions", "syllabus", "additional_instructions"],
-        template=template,
-    )
-    llm = ChatOpenAI(model_name="GPT-5", temperature=0.3, max_tokens=1400)
-    output_parser = StrOutputParser()
-    return prompt | llm | output_parser
-
-def generate_predicted_paper(past_db: FAISS, syllabus_text: str, additional_instructions: str = "") -> str:
-    """Generate predicted question paper"""
-    # Retrieve rich past context to drive structure + topic frequencies
-    docs = past_db.similarity_search("exam structure sections numbering marks distribution typical topics", k=12)
-    past_context = "\n".join([doc.page_content for doc in docs])
-    
-    chain = get_question_generator_chain()
-    additional_prompt = f"\nAdditional Instructions: {additional_instructions}" if additional_instructions else ""
-    
-    return chain.invoke({
-        "past_questions": past_context,
-        "syllabus": syllabus_text,
-        "additional_instructions": additional_prompt
-    })
-
-def paper_to_pdf_bytes(title: str, content: str) -> bytes:
-    """Convert paper content to PDF bytes"""
-    if not REPORTLAB_OK:
-        raise RuntimeError("ReportLab not installed. Run: pip install reportlab")
-    
-    buf = BytesIO()
-    doc = SimpleDocTemplate(buf, pagesize=A4, title=title)
-    styles = getSampleStyleSheet()
-    story = [Paragraph(title, styles["Title"]), Spacer(1, 12)]
-    
-    # Simple text processing (can be enhanced)
-    lines = content.split('\n')
-    for line in lines:
-        if line.strip():
-            story.append(Paragraph(line.strip(), styles["BodyText"]))
-            story.append(Spacer(1, 6))
-    
-    doc.build(story)
-    pdf_data = buf.getvalue()
-    buf.close()
-    return pdf_data
-
 # API Endpoints
 @app.get("/", tags=["Info"])
 async def root():
@@ -436,15 +319,6 @@ async def generate_paper_from_files(
             pass
         
         raise HTTPException(status_code=500, detail=f"Error generating question paper: {str(e)}")
-
-from pydantic import BaseModel
-
-class GeneratePaperRequest(BaseModel):
-    bucket_name: str
-    old_question_prefix: str
-    syllabus_prefix: str
-    predicted_question_prefix: str
-    additional_instructions: Optional[str] = None
 
 @app.post("/generate-paper-s3", 
            tags=["☁️ S3 Question Paper Generation"],
