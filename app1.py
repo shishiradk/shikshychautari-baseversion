@@ -10,7 +10,7 @@ import os
 import re
 from io import BytesIO
 
-# Optional PDF generation (reportlab). If missing, show install hint.
+# Optional PDF generation (ReportLab). If missing, fallback to TXT.
 try:
     from reportlab.lib.pagesizes import A4
     from reportlab.lib.styles import getSampleStyleSheet
@@ -184,9 +184,7 @@ def main():
                 with st.expander("📄 Predicted Paper"):
                     render_question_paper(paper)
 
-                    if not REPORTLAB_OK:
-                        st.info("To enable PDF downloads, install ReportLab:  \n`pip install reportlab`")
-
+                    # Always show download button
                     if REPORTLAB_OK:
                         try:
                             pdf_bytes = paper_to_pdf_bytes("Predicted Question Paper", paper)
@@ -199,6 +197,15 @@ def main():
                             )
                         except Exception as e:
                             st.error(f"PDF generation failed: {e}")
+                    else:
+                        # Fallback TXT download
+                        st.download_button(
+                            label="⬇️ Download Paper as TXT",
+                            data=paper.encode("utf-8"),
+                            file_name="predicted_paper.txt",
+                            mime="text/plain",
+                            use_container_width=True,
+                        )
 
 if __name__ == "__main__":
     main()

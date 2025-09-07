@@ -12,8 +12,9 @@ from io import BytesIO
 # Optional PDF generation
 try:
     from reportlab.lib.pagesizes import A4
-    from reportlab.lib.styles import getSampleStyleSheet
+    from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
     from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer
+    from reportlab.lib.enums import TA_CENTER
     REPORTLAB_OK = True
 except Exception:
     REPORTLAB_OK = False
@@ -58,6 +59,7 @@ Requirements:
 5. Keep section-wide marks (e.g., [2 x 10 = 20]) and per-question marks ([4+6], [5], [2+3]).
 6. Each section must start on a new line. Each question must be numbered clearly.
 7. Center section headings.
+8. Use 'Answer any ...' instructions as in past papers but not with Group or Section but in another line .
 
 --- PAST QUESTIONS CONTEXT ---
 {past_questions}
@@ -71,7 +73,7 @@ Output strictly the structured question paper body.
         input_variables=["past_questions", "syllabus"],
         template=template,
     )
-    llm = ChatOpenAI(model_name="gpt-4o-mini", temperature=0.3, max_tokens=1400)
+    llm = ChatOpenAI(model="gpt-4o-mini", temperature=0.3, max_tokens=1400)
     output_parser = StrOutputParser()
     return prompt | llm | output_parser
 
@@ -109,8 +111,31 @@ def clean_body_keep_all_marks(text: str) -> str:
 
 def enforce_structure(text: str) -> str:
     text = re.sub(r"(Section\s+[A-Z])", r"\n\1", text, flags=re.I)
+    text = re.sub(r"(GROUP\s+[A-Z])", r"\n\1", text, flags=re.I)
     text = re.sub(r"(?<!^)(\s*)(\d+\.)", r"\n\2", text)  # each question new line
     return text
+
+def split_group_instructions(text: str) -> str:
+    """
+    Put 'Answer any ...' instructions on a new line after Group/Section headings,
+    but keep them left aligned (not centered).
+    """
+    text = re.sub(r"((Group|Section)\s+[A-Z])\s+(Answer any.+)", r"\1\n\3", text, flags=re.I)
+    return text
+
+def enforce_pom1_style(text: str) -> str:
+    """
+    Remove double numbering (standalone digits and duplicates before 'n.').
+    Handles patterns like '1 1.', '2) 2.' etc.
+    """
+    out_lines = []
+    for line in text.splitlines():
+        l = line.strip()
+        if re.fullmatch(r"\d+", l):
+            continue
+        l = re.sub(r"^(\d+)[\s\.)]+(\1\.)", r"\2", l)
+        out_lines.append(l)
+    return "\n".join(out_lines)
 
 def center_sections(text: str) -> str:
     lines = text.splitlines()
@@ -122,10 +147,65 @@ def center_sections(text: str) -> str:
             out.append(line.strip())
     return "\n".join(out)
 
+# -------- PDF Generator with dynamic title --------
+def paper_to_pdf_bytes(content: str, subject: str) -> bytes:
+    buf = BytesIO()
+    doc = SimpleDocTemplate(
+        buf,
+        pagesize=A4,
+        rightMargin=40,
+        leftMargin=40,
+        topMargin=40,
+        bottomMargin=40
+    )
+
+    styles = getSampleStyleSheet()
+    title_style = ParagraphStyle(
+        "title_style",
+        parent=styles["Title"],
+        alignment=TA_CENTER,
+        fontSize=16,
+        spaceAfter=20
+    )
+    q_style = ParagraphStyle("q_style", parent=styles["Normal"], leading=18)
+    sec_style = ParagraphStyle("sec_style", parent=styles["Heading2"],
+                               alignment=TA_CENTER, spaceBefore=12, spaceAfter=12)
+    instr_style = ParagraphStyle("instr_style", parent=styles["Normal"],
+                                 alignment=0, spaceBefore=6, spaceAfter=6)
+
+    story = []
+    pdf_title = f"Predicted Questions for {subject}"
+    story.append(Paragraph(pdf_title, title_style))
+    story.append(Spacer(1, 24))
+
+    lines = content.splitlines()
+    for line in lines:
+        if not line.strip():
+            continue
+        if re.match(r"^(Section\s+[A-Z])", line.strip(), flags=re.I):
+            story.append(Paragraph(line.strip(), sec_style))
+            story.append(Spacer(1, 12))
+        elif re.match(r"(GROUP\s+[A-Z])", line.strip(), flags=re.I):
+            story.append(Spacer(1, 18))
+            story.append(Paragraph(line.strip(), sec_style))
+            story.append(Spacer(1, 6))
+        elif re.match(r"^Answer any", line.strip(), flags=re.I):
+            story.append(Paragraph(line.strip(), instr_style))
+            story.append(Spacer(1, 6))
+        elif re.match(r"^\d+\.", line.strip()):
+            q_text = re.sub(r"^(\d+\.)", r"<b>\1</b>", line.strip())
+            story.append(Paragraph(q_text, q_style))
+            story.append(Spacer(1, 12))
+        else:
+            story.append(Paragraph(line.strip(), q_style))
+
+    doc.build(story)
+    return buf.getvalue()
+
 # -------- Streamlit App --------
 def main():
     st.set_page_config("📘 Question Paper Generator", layout="wide")
-    st.title("📘 Structured Question Paper Generator (Marks Preserved, No Header)")
+    st.title("📘 Structured Question Paper Generator (Marks Preserved, POM1 Style)")
 
     with st.sidebar:
         st.header("Upload Files")
@@ -135,8 +215,9 @@ def main():
         if st.button("Process Files"):
             if syllabus_file and past_files:
                 st.session_state.syllabus_text = extract_text_from_pdfs([syllabus_file])
+                st.session_state.subject = os.path.splitext(syllabus_file.name)[0]
+
                 past_text = extract_text_from_pdfs(past_files)
-                # clean before sending to FAISS
                 past_text = strip_headers_and_footers(past_text)
                 past_text = clean_body_keep_all_marks(past_text)
                 past_chunks = chunk_text(past_text)
@@ -154,22 +235,35 @@ def main():
             paper = strip_headers_and_footers(raw_paper)
             paper = clean_body_keep_all_marks(paper)
             paper = enforce_structure(paper)
+            paper = split_group_instructions(paper)
+            paper = enforce_pom1_style(paper)
             paper = center_sections(paper)
 
-            st.subheader("Predicted Paper (Structured, Marks Preserved)")
-            st.text_area("Output", paper, height=600)
+            st.subheader("Predicted Paper (Structured, Marks Preserved, POM1 Style)")
+
+            html_lines = []
+            subject = st.session_state.get("subject", "Subject")
+            html_lines.append(f"<h3 style='text-align:center;'>Predicted Questions for {subject}</h3><br>")
+
+            for line in paper.splitlines():
+                if re.match(r"^(Section\s+[A-Z])", line.strip(), flags=re.I):
+                    html_lines.append(f"<div style='text-align:center; margin-top:20px;'><b>{line.strip()}</b></div>")
+                elif re.match(r"(GROUP\s+[A-Z])", line.strip(), flags=re.I):
+                    html_lines.append(f"<div style='text-align:center; margin-top:20px;'><b>{line.strip()}</b></div>")
+                elif re.match(r"^Answer any", line.strip(), flags=re.I):
+                    html_lines.append(f"<p style='margin-bottom:12px;'><i>{line.strip()}</i></p>")
+                elif re.match(r"^\d+\.", line.strip()):
+                    q_text = re.sub(r"^(\d+\.)", r"<b>\1</b>", line.strip())
+                    html_lines.append(f"<p style='margin-bottom:18px;'>{q_text}</p>")
+                else:
+                    html_lines.append(f"<p style='margin-bottom:12px;'>{line.strip()}</p>")
+
+            styled_output = "\n".join(html_lines)
+            st.markdown(styled_output, unsafe_allow_html=True)
 
             if REPORTLAB_OK:
-                pdf_bytes = paper_to_pdf_bytes("Predicted Paper", paper)
+                pdf_bytes = paper_to_pdf_bytes(paper, subject)
                 st.download_button("⬇️ Download PDF", pdf_bytes, "predicted_paper.pdf", "application/pdf")
-
-def paper_to_pdf_bytes(title: str, content: str) -> bytes:
-    buf = BytesIO()
-    doc = SimpleDocTemplate(buf, pagesize=A4, title=title)
-    styles = getSampleStyleSheet()
-    story = [Paragraph(content.replace("\n", "<br/>"), styles["BodyText"])]
-    doc.build(story)
-    return buf.getvalue()
 
 if __name__ == "__main__":
     main()
