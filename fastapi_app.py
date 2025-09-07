@@ -273,7 +273,7 @@ async def generate_paper_from_files(
         
         # Load vector store and generate paper
         past_db = load_vector_store(session_id)
-        predicted_paper = generate_predicted_paper(
+        predicted_paper, past_context, subject_name = generate_predicted_paper(
             past_db, 
             syllabus_text, 
             additional_instructions or ""
@@ -286,7 +286,7 @@ async def generate_paper_from_files(
                 detail="PDF generation not available. Install reportlab: pip install reportlab"
             )
         
-        pdf_bytes = paper_to_pdf_bytes("Predicted Question Paper", predicted_paper)
+        pdf_bytes = paper_to_pdf_bytes("Predicted Question Paper", predicted_paper, past_context, subject_name)
         
         # Clean up vector store files
         try:
@@ -381,23 +381,27 @@ async def generate_paper_from_s3(
         print("📚 Downloading syllabus PDFs from S3...")
         syllabus_pdfs = download_pdfs_from_s3(data.bucket_name, data.syllabus_prefix)
         
-        # Step 3: Extract text from all PDFs
-        print("🔍 Extracting text from PDFs...")
+       
+        
+        # Step 3: Extract text from syllabus PDFs
+        print("🔍 Extracting text from syllabus PDFs...")
         syllabus_text = extract_text_from_pdfs(syllabus_pdfs)
         if not syllabus_text.strip():
             raise HTTPException(status_code=400, detail="No text could be extracted from syllabus PDF files")
-        
+
+        # Step 4: Extract text from old question PDFs
+        print("🔍 Extracting text from old question PDFs...")
         old_questions_text = extract_text_from_pdfs(old_question_pdfs)
         if not old_questions_text.strip():
             raise HTTPException(status_code=400, detail="No text could be extracted from old question PDF files")
         
-        # Step 4: Generate question paper
+        # Step 5: Generate question paper
         print("🤖 Generating predicted question paper...")
         chunks = chunk_text(old_questions_text)
         vector_store_path = create_vector_store(chunks, session_id)
         
         past_db = load_vector_store(session_id)
-        predicted_paper = generate_predicted_paper(
+        predicted_paper, past_context, subject_name = generate_predicted_paper(
             past_db, 
             syllabus_text, 
             data.additional_instructions or ""
@@ -410,7 +414,7 @@ async def generate_paper_from_s3(
                 detail="PDF generation not available. Install reportlab: pip install reportlab"
             )
         
-        pdf_bytes = paper_to_pdf_bytes("Predicted Question Paper", predicted_paper)
+        pdf_bytes = paper_to_pdf_bytes("Predicted Question Paper", predicted_paper, past_context, subject_name)
         
         # Step 6: Upload to S3 using the provided predicted question prefix
         print("📤 Uploading generated PDF to S3...")

@@ -60,22 +60,22 @@ def main():
         else:
             with st.spinner("Generating predicted paper..."):
                 past_db = load_vector_store()
-                paper = generate_predicted_paper(past_db, st.session_state.syllabus_text)
-                st.success("Generated predicted paper.")
+                paper, past_context, subject_name = generate_predicted_paper(past_db, st.session_state.syllabus_text, "")
+                st.success(f"Generated predicted paper for '{subject_name}'.")
 
                 with st.expander("📄 Predicted Paper"):
-                    render_question_paper(paper, st)
+                    render_question_paper(paper, st, past_context)
 
                     if not REPORTLAB_OK:
                         st.info("To enable PDF downloads, install ReportLab:  \n`pip install reportlab`")
 
                     if REPORTLAB_OK:
                         try:
-                            pdf_bytes = paper_to_pdf_bytes("Predicted Question Paper", paper)
+                            pdf_bytes = paper_to_pdf_bytes("Predicted Question Paper", paper, past_context, subject_name)
                             st.download_button(
                                 label="⬇️ Download Paper as PDF",
                                 data=pdf_bytes,
-                                file_name="predicted_paper.pdf",
+                                file_name=f"predicted_paper_{subject_name.replace(' ', '_')}.pdf",
                                 mime="application/pdf",
                                 use_container_width=True,
                             )
