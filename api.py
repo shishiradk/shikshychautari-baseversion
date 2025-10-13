@@ -37,7 +37,7 @@ class GeneratePaperRequest(BaseModel):
 # FastAPI app initialization
 app = FastAPI(
     title="🎓 Question Paper Generator API",
-    description="API for generating structured question papers with POM1 style formatting",
+    description="API for generating structured question papers with POM1 style formatting", 
     version="1.0.0"
 )
 
@@ -162,7 +162,7 @@ async def root():
  
 @app.post("/generate-paper-s3", 
            tags=["☁️ S3 Question Paper Generation"],
-           summary="☁️ Generate Structured Question Paper from S3 (POM1 Style)",
+            summary="☁️ Generate Structured Question Paper from S3 (Old Questions Style)",
            description="Download PDFs from S3 (old questions + syllabus), generate structured question paper with POM1 style formatting and preserved marks, then upload result back to S3",
            response_description="Success message with S3 location of generated structured PDF")
 async def generate_paper_from_s3(
@@ -278,7 +278,7 @@ async def generate_paper_from_s3(
                 "session_id": session_id,
                 "predicted_question_prefix": data.predicted_question_prefix,
                 "subject_name": subject_name,
-                "formatting": "POM1 Style with Preserved Marks"
+                "formatting": "Old Questions with Preserved Marks"
             },
             status_code=200
         )
