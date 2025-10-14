@@ -81,8 +81,19 @@ def main():
             st.markdown(styled_output, unsafe_allow_html=True)
 
             if REPORTLAB_OK:
-                pdf_bytes = paper_to_pdf_bytes(paper, subject)
-                st.download_button("⬇️ Download PDF", pdf_bytes, "predicted_paper.pdf", "application/pdf")
+                try:
+                    pdf_bytes = paper_to_pdf_bytes(paper, subject)
+                    st.download_button(
+                        "⬇️ Download PDF", 
+                        pdf_bytes, 
+                        f"predicted_paper_{subject.replace(' ', '_')}.pdf", 
+                        "application/pdf",
+                        help="Click to download the generated question paper as a PDF file"
+                    )
+                except Exception as e:
+                    st.error(f"Error generating PDF: {str(e)}")
+            else:
+                st.warning("PDF generation is not available. Please install reportlab: pip install reportlab")
 
 if __name__ == "__main__":
     main()
