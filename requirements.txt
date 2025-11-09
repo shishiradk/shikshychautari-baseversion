@@ -1,9 +1,9 @@
-streamlit>=1.28.0
+streamlit
 openai>=1.0.0
 langchain>=0.1.0
-langchain-openai>=0.0.5
+langchain-openai
 langchain-core>=0.1.0
-langchain-community>=0.0.10
+langchain-community
 langchain-groq>=0.1.0
 langchain-chroma>=0.1.0
 langchain-huggingface>=0.0.1
@@ -15,7 +15,7 @@ opencv-python>=4.8.0
 sentence-transformers>=2.2.0
 transformers>=4.21.0
 tokenizers>=0.13.0
-torch>=2.0.0
+torch
 accelerate>=0.20.0
 python-docx>=0.8.11
 docx2txt>=0.8
