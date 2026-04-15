@@ -41,9 +41,14 @@ def chunk_text(text):
     splitter = RecursiveCharacterTextSplitter(chunk_size=1000, chunk_overlap=150)
     return splitter.split_text(text)
 
-def create_vector_store(chunks, db_path="faiss_index"):
+def create_vector_store(chunks, db_path="faiss_index", book_chunks=None):
     embeddings = OpenAIEmbeddings()
-    vectorstore = FAISS.from_texts(chunks, embedding=embeddings)
+    all_texts = list(chunks)
+    metadatas = [{"source": "past_paper"}] * len(chunks)
+    if book_chunks:
+        all_texts.extend(book_chunks)
+        metadatas.extend([{"source": "book"}] * len(book_chunks))
+    vectorstore = FAISS.from_texts(all_texts, embedding=embeddings, metadatas=metadatas)
     vectorstore.save_local(db_path)
 
 def load_vector_store(db_path="faiss_index"):
@@ -111,22 +116,71 @@ def center_sections(text: str) -> str:
     return "\n".join(out)
 
 
-def generate_predicted_paper(past_db, syllabus_text):
-    docs = past_db.similarity_search(
+def generate_predicted_paper(past_db, syllabus_text, has_book=False):
+    # Retrieve past-paper docs for STYLE (structure, numbering, marks)
+    style_docs = past_db.similarity_search(
         "exam structure sections numbering marks distribution typical topics", k=12
     )
-    past_context = "\n".join([doc.page_content for doc in docs])
-    chain = get_question_generator_chain()
-    return chain.invoke({
+    past_docs = [d for d in style_docs if d.metadata.get("source") != "book"]
+    past_context = "\n".join([d.page_content for d in past_docs]) or \
+                   "\n".join([d.page_content for d in style_docs])
+
+    # Retrieve book docs for CONTENT grounding (only if book uploaded)
+    book_context = ""
+    if has_book:
+        book_docs = []
+        # Query by syllabus lines so retrieval stays on-syllabus
+        queries = [q.strip() for q in syllabus_text.splitlines() if len(q.strip()) > 8][:20]
+        if not queries:
+            queries = ["definition", "concept", "theory", "example", "explanation"]
+        for q in queries:
+            try:
+                hits = past_db.similarity_search(q, k=3)
+                book_docs.extend([h for h in hits if h.metadata.get("source") == "book"])
+            except Exception:
+                pass
+        # Dedupe
+        seen = set()
+        unique = []
+        for d in book_docs:
+            h = hash(d.page_content[:120])
+            if h not in seen:
+                seen.add(h)
+                unique.append(d)
+        book_context = "\n\n".join([d.page_content for d in unique[:15]])
+
+    chain = get_question_generator_chain(has_book=has_book)
+    invoke_args = {
         "past_questions": past_context,
-        "syllabus": syllabus_text
-    }), past_context
+        "syllabus": syllabus_text,
+    }
+    if has_book:
+        invoke_args["book_content"] = book_context or "(no book content retrieved)"
+    return chain.invoke(invoke_args), past_context
 
 
 
 
 
-def get_question_generator_chain():
+def get_question_generator_chain(has_book=False):
+    book_rules = ""
+    book_section = ""
+    input_vars = ["past_questions", "syllabus"]
+    if has_book:
+        input_vars = ["past_questions", "syllabus", "book_content"]
+        book_section = """
+
+--- BOOK CONTENT (PRIMARY SOURCE FOR QUESTIONS) ---
+{book_content}
+"""
+        book_rules = """
+
+--- BOOK-GROUNDING RULES (STRICT) ---
+1. Every question MUST be answerable strictly from the BOOK CONTENT above.
+2. Do NOT generate questions about topics absent from the BOOK CONTENT, even if they appear in the syllabus.
+3. Do NOT invent facts, code, or examples outside the BOOK CONTENT.
+4. Use the SYLLABUS only to decide WHICH book topics are exam-relevant.
+5. Use the PAST PAPER only for style, structure, numbering, and marks — not for content."""
     template = """
  You are an expert academic exam paper generator for university-level exams.
 
@@ -159,11 +213,16 @@ Generate **exactly one complete future exam paper** strictly following the struc
     b. question
     
 
---- MARKS RULES ---
-- Dynamically calculate all **section totals** using multiplication.
-- Preserve all sub-question marks as they appear in the past paper.
-- Format section totals as `[X x Y = Z]`.
+--- MARKS RULES (MANDATORY) ---
+- EVERY question MUST end with its marks in square brackets. No exceptions.
+  Examples: "... explain with example. [5]" or "... derive the formula. [2+3]"
+- If a question has sub-parts, write the combined mark like [2+3] or [1+4+5].
+- Section headers MUST include total marks formatted as `[X x Y = Z]`
+  (e.g., "Section B Attempt any Eight Questions [8 x 5 = 40]").
+- Dynamically calculate section totals using multiplication.
+- Preserve sub-question marks as they appear in the past paper.
 - Do NOT output incorrect formats like `[85 = 40]`.
+- If a question has NO marks bracket, the paper is invalid — always include one.
 
 --- OUTPUT FORMAT ---
 - Only output:
@@ -175,20 +234,100 @@ Generate **exactly one complete future exam paper** strictly following the struc
 --- INPUT VARIABLES ---
 - {past_questions}: Past paper questions to replicate style and formatting
 - {syllabus}: Syllabus topics to generate fresh questions
+""" + book_section + book_rules + """
 
 Output:
 A single, fully formatted exam paper following all rules above.
 
 """
     prompt = PromptTemplate(
-        input_variables=["past_questions", "syllabus"],
+        input_variables=input_vars,
         template=template,
     )
-    llm = ChatOpenAI(model="gpt-4o-mini", temperature=0.3, max_tokens=1400)
+    llm = ChatOpenAI(model="gpt-4o", temperature=0.3, max_tokens=1400)
     output_parser = StrOutputParser()
     return prompt | llm | output_parser
 
 
+
+
+def score_paper(paper: str, syllabus_text: str, has_book: bool, book_excerpt: str = "") -> tuple:
+    """Return (score 0-100, feedback) for a generated paper."""
+    book_check = ""
+    if has_book and book_excerpt:
+        book_check = f"""
+5. Book grounding (0-25): is every question answerable from the BOOK EXCERPT?
+BOOK EXCERPT:
+{book_excerpt[:2500]}
+"""
+    else:
+        book_check = "5. Syllabus grounding (0-25): is every question on a syllabus topic?"
+
+    rubric = f"""You are a strict exam-paper reviewer. Score the paper below on a 0-100 scale using this rubric:
+
+1. Marks present (0-25): does EVERY question end with [marks]? -5 per missing bracket.
+2. Section headers (0-20): do headers include [X x Y = Z]?
+3. Structure (0-15): are sections and numbering consistent?
+4. Question quality (0-15): are questions clear, non-duplicate, well-phrased?
+{book_check}
+
+SYLLABUS:
+{syllabus_text[:2000]}
+
+PAPER:
+{paper}
+
+Respond in EXACTLY this format:
+SCORE: <integer 0-100>
+FEEDBACK: <one-line summary of main issues, or "none">
+"""
+    llm = ChatOpenAI(model="gpt-4o-mini", temperature=0.0, max_tokens=200)
+    resp = llm.invoke(rubric).content
+    m = re.search(r"SCORE:\s*(\d+)", resp)
+    score = int(m.group(1)) if m else 0
+    fb = re.search(r"FEEDBACK:\s*(.+)", resp)
+    return score, (fb.group(1).strip() if fb else "")
+
+
+def generate_predicted_paper_best_of_n(past_db, syllabus_text, has_book=False, n=3):
+    """Generate N candidate papers, score them, return the best one."""
+    candidates = []
+    book_excerpt = ""
+    for i in range(n):
+        paper, past_context = generate_predicted_paper(past_db, syllabus_text, has_book=has_book)
+        if has_book and not book_excerpt:
+            # Grab book excerpt once for verifier reuse
+            try:
+                queries = [q.strip() for q in syllabus_text.splitlines() if len(q.strip()) > 8][:10]
+                book_docs = []
+                for q in queries or ["concept"]:
+                    hits = past_db.similarity_search(q, k=2)
+                    book_docs.extend([h for h in hits if h.metadata.get("source") == "book"])
+                seen = set()
+                for d in book_docs:
+                    h = hash(d.page_content[:120])
+                    if h not in seen:
+                        seen.add(h)
+                        book_excerpt += d.page_content + "\n\n"
+                    if len(book_excerpt) > 3000:
+                        break
+            except Exception:
+                pass
+        try:
+            score, feedback = score_paper(paper, syllabus_text, has_book, book_excerpt)
+        except Exception as e:
+            score, feedback = 0, f"scoring failed: {e}"
+        candidates.append({"paper": paper, "score": score, "feedback": feedback, "past_context": past_context})
+
+    best = max(candidates, key=lambda c: c["score"])
+    return best["paper"], best["past_context"], candidates
+
+
+def _pdf_escape(text: str) -> str:
+    """Escape <, >, & so reportlab Paragraph doesn't eat unknown HTML tags
+    like <canvas>, <br>, <img>, etc. in question text."""
+    import html as _h
+    return _h.escape(text, quote=False)
 
 
 def paper_to_pdf_bytes(content: str, subject: str) -> bytes:
@@ -217,30 +356,32 @@ def paper_to_pdf_bytes(content: str, subject: str) -> bytes:
                                  alignment=0, spaceBefore=6, spaceAfter=6)
 
     story = []
-    pdf_title = f"Predicted Questions for {subject}"
+    pdf_title = f"Predicted Questions for {_pdf_escape(subject)}"
     story.append(Paragraph(pdf_title, title_style))
     story.append(Spacer(1, 24))
 
     lines = content.splitlines()
     for line in lines:
-        if not line.strip():
+        s = line.strip()
+        if not s:
             continue
-        if re.match(r"^(Section\s+[A-Z])", line.strip(), flags=re.I):
-            story.append(Paragraph(line.strip(), sec_style))
+        esc = _pdf_escape(s)
+        if re.match(r"^(Section\s+[A-Z])", s, flags=re.I):
+            story.append(Paragraph(esc, sec_style))
             story.append(Spacer(1, 12))
-        elif re.match(r"(GROUP\s+[A-Z])", line.strip(), flags=re.I):
+        elif re.match(r"(GROUP\s+[A-Z])", s, flags=re.I):
             story.append(Spacer(1, 18))
-            story.append(Paragraph(line.strip(), sec_style))
+            story.append(Paragraph(esc, sec_style))
             story.append(Spacer(1, 6))
-        elif re.match(r"^Answer any", line.strip(), flags=re.I):
-            story.append(Paragraph(line.strip(), instr_style))
+        elif re.match(r"^Answer any", s, flags=re.I):
+            story.append(Paragraph(esc, instr_style))
             story.append(Spacer(1, 6))
-        elif re.match(r"^\d+\.", line.strip()):
-            q_text = re.sub(r"^(\d+\.)", r"<b>\1</b>", line.strip())
+        elif re.match(r"^\d+\.", s):
+            q_text = re.sub(r"^(\d+\.)", r"<b>\1</b>", esc)
             story.append(Paragraph(q_text, q_style))
             story.append(Spacer(1, 12))
         else:
-            story.append(Paragraph(line.strip(), q_style))
+            story.append(Paragraph(esc, q_style))
 
     doc.build(story)
     return buf.getvalue()
