@@ -220,3 +220,5 @@ data/
 Web Technology*/
 # Conda-style env folders
 env1/
+# Local deploy helper (not needed on the Space)
+deploy_hf.ps1
