@@ -205,3 +205,18 @@ cython_debug/
 marimo/_static/
 marimo/_lsp/
 __marimo__/
+
+# ---- Project-specific (Hugging Face Space) ----
+# Runtime FAISS index (regenerated on each "Process Files")
+faiss_index/
+faiss_index_*/
+# Generated artifacts
+interview_prep.pdf
+generate_interview_prep.py
+# Local sample data — do not ship to the Space (keeps repo small)
+data/
+*.pdf
+*.docx
+Web Technology*/
+# Conda-style env folders
+env1/

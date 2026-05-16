@@ -1,3 +1,15 @@
+---
+title: Shikshya Chautari Question Paper Generator
+emoji: 📘
+colorFrom: blue
+colorTo: indigo
+sdk: streamlit
+sdk_version: 1.45.1
+app_file: app.py
+pinned: false
+license: mit
+---
+
 # Shikshya Chautari — Question Paper Generator
 
 An AI-powered Streamlit app that generates predicted exam question papers from a syllabus, past question papers, and (optionally) a reference book. Built for Nepali university exams (BSc CSIT, BIT, BIM, BCA) but subject-agnostic.

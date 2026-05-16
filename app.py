@@ -27,13 +27,29 @@ def main():
     st.title("📘 Structured Question Paper Generator ")
 
     with st.sidebar:
+        st.header("🔑 OpenAI API Key")
+        api_key = st.text_input(
+            "Enter your OpenAI API key",
+            type="password",
+            help="Your key is used only for this session and never stored. Get one at platform.openai.com/api-keys",
+            placeholder="sk-...",
+        )
+        if api_key:
+            os.environ["OPENAI_API_KEY"] = api_key.strip()
+            st.success("API key set for this session.")
+        elif not os.getenv("OPENAI_API_KEY"):
+            st.warning("Enter your OpenAI API key above to use the app.")
+
+        st.divider()
         st.header("Upload Files")
         syllabus_file = st.file_uploader("Upload Syllabus PDF", type=["pdf"], key="syllabus")
         past_files = st.file_uploader("Upload Past Questions PDF(s)", type=["pdf"], accept_multiple_files=True, key="past_questions")
         book_files = st.file_uploader("Upload Reference Book(s) PDF (optional)", type=["pdf"], accept_multiple_files=True, key="book_files")
 
         if st.button("Process Files"):
-            if syllabus_file and past_files:
+            if not os.getenv("OPENAI_API_KEY"):
+                st.error("Please enter your OpenAI API key first.")
+            elif syllabus_file and past_files:
                 st.session_state.syllabus_text = extract_text_from_pdfs([syllabus_file])
                 st.session_state.subject = os.path.splitext(syllabus_file.name)[0]
 
