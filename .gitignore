@@ -222,3 +222,6 @@ Web Technology*/
 env1/
 # Local deploy helper (not needed on the Space)
 deploy_hf.ps1
+# Eval test data (copyrighted papers) and machine-specific output
+eval/cases/
+eval/results.json
