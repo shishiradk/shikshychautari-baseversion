@@ -239,6 +239,12 @@ def main():
                     help="Cosine sim threshold for 'on-syllabus' / 'covered'. CALIBRATE.")
     ap.add_argument("--ground-threshold", type=float, default=0.75,
                     help="Cosine sim threshold for 'grounded in source'. CALIBRATE.")
+    ap.add_argument("--skip", nargs="*", default=[],
+                    help="Subject prefixes to skip, e.g. --skip dwdm java")
+    ap.add_argument("--rerun", nargs="*", default=[],
+                    help="Force re-run specific cases even if cached, e.g. --rerun cprog-2077")
+    ap.add_argument("--rerun-all", action="store_true",
+                    help="Ignore cache and re-run every case (full fresh eval)")
     args = ap.parse_args()
 
     if not os.getenv("OPENAI_API_KEY"):
@@ -248,15 +254,39 @@ def main():
         print(f"ERROR: no cases directory at {CASES_DIR}. See module docstring.")
         sys.exit(1)
 
-    case_names = sorted(d for d in os.listdir(CASES_DIR)
-                        if os.path.isdir(os.path.join(CASES_DIR, d)))
+    skip_prefixes = tuple(s.lower() for s in (args.skip or []))
+    case_names = sorted(
+        d for d in os.listdir(CASES_DIR)
+        if os.path.isdir(os.path.join(CASES_DIR, d))
+        and not any(d.lower().startswith(p) for p in skip_prefixes)
+    )
     if not case_names:
         print(f"ERROR: no case folders in {CASES_DIR}. See module docstring.")
         sys.exit(1)
 
+    # Load cached results so we can skip already-evaluated cases
+    cached = {}
+    if not args.rerun_all and os.path.exists(RESULTS_PATH):
+        try:
+            with open(RESULTS_PATH, encoding="utf-8") as f:
+                prev = json.load(f)
+            for r in prev.get("per_case", []):
+                if "error" not in r:
+                    cached[r["case"]] = r
+            if cached:
+                print(f"[cache] loaded {len(cached)} existing result(s) from results.json")
+        except Exception:
+            pass  # corrupt file — just re-run everything
+
+    force_rerun = set(args.rerun or [])
+
     embedder = OpenAIEmbeddings()
     rows = []
     for nm in case_names:
+        if nm in cached and nm not in force_rerun:
+            print(f"-> skipping (cached): {nm}")
+            rows.append(cached[nm])
+            continue
         print(f"-> evaluating: {nm} ...")
         try:
             rows.append(evaluate_case(nm, os.path.join(CASES_DIR, nm), args, embedder))
