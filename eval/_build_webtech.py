@@ -4,9 +4,13 @@ that does NOT appear in past/ (no leakage)."""
 import os, shutil
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-WT = os.path.join(ROOT, "Web Technology-20260415T132741Z-3-001", "Web Technology")
-SYLLABUS = os.path.join(ROOT, "CSC318-Web-Technology.pdf")
+WT = os.path.join(ROOT, "data", "raw", "WebTechnology")
+SYLLABUS = os.path.join(WT, "CSC318-Web-Technology-Syllabus.pdf")
 CASES = os.path.join(ROOT, "eval", "cases")
+
+# KEC WebTech book (OCR'd) — TU-aligned, written by Nepali authors for CSC318.
+# Covers Bootstrap, jQuery, AJAX, JSON — topics missing from all Western books.
+KEC_OCR = os.path.join(WT, "book", "WebTechKecSem5_222_ocr.txt")
 
 # year -> source filename (pure question papers only)
 PAPERS = {
@@ -32,7 +36,12 @@ for held_out in years:
         if y != held_out:
             shutil.copy(os.path.join(WT, PAPERS[y]),
                         os.path.join(past, f"{y}.pdf"))
+    if os.path.exists(KEC_OCR):
+        book_dir = os.path.join(case, "book")
+        os.makedirs(book_dir)
+        shutil.copy(KEC_OCR, os.path.join(book_dir, "kec_webtech_ocr.txt"))
     print(f"built webtech-{held_out}: reference={held_out}, "
-          f"past={[y for y in years if y != held_out]}")
+          f"past={[y for y in years if y != held_out]}, "
+          f"book={'KEC OCR txt' if os.path.exists(KEC_OCR) else 'none'}")
 
 print(f"\n{len(years)} cases created under {CASES}")

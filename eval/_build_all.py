@@ -85,7 +85,7 @@ SUBJECTS = [
             ("2080", "data/raw/DS/TU_Discrete_Structures_2080_Exam.pdf"),
             ("2081", "data/raw/DS/TU_Discrete_Structures_2081_Exam.pdf"),
         ],
-        [],
+        [],  # Rosen book hurts DS — style mismatch (theorem-heavy vs TU exam-style questions)
     ),
     (
         "oop",
